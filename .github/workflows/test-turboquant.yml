@@ -1,4 +1,4 @@
-name: TurboQuant Fast Limit Benchmark on GitHub M1 Runner
+name: TurboQuant Honest Benchmark on GitHub M1 Runner
 
 on:
   push:
@@ -27,11 +27,11 @@ jobs:
           git clone https://github.com/rachittshah/mlx-turboquant.git
           cd mlx-turboquant && pip install -e .
 
-      - name: Fast TurboQuant Benchmark
+      - name: Honest TurboQuant Benchmark
         run: |
           python - << 'EOF'
           import mlx.core as mx
-          from mlx_lm import load
+          from mlx_lm import load, generate
           from mlx_turboquant.cache import TurboQuantKVCache
           import time
           import psutil
@@ -42,53 +42,44 @@ jobs:
               mx.clear_cache()
               return psutil.Process().memory_info().rss / (1024 ** 2)
 
-          print("Loading fast small model...")
+          print("Loading model...")
           model, tokenizer = load("mlx-community/Qwen2-0.5B-Instruct-4bit", lazy=True)
           print(f"Loaded {len(model.layers)} layers\n")
 
-          base_text = "Agentic coding: analyze codebase, keep history, use tools, fix iteratively. " * 20
+          base_text = "Agentic coding task with large context and history. " * 15
 
-          print("=== FAST TURBOQUANT BENCHMARK ===\n")
-          print(f"{'Mult':>6} | {'~Tokens':>8} | {'Baseline':>12} | {'TQ 3-bit':>14} | {'Base Mem Δ':>12} | {'TQ Mem Δ':>12} | {'Ratio':>8}")
-          print("-" * 85)
+          print("Mult | ~Tokens | Baseline | TQ 3-bit | Base Mem | TQ Mem | Ratio")
+          print("-" * 70)
 
-          for mult in [10, 30, 60, 100, 150]:
+          for mult in [20, 50, 80, 120]:
               prompt = base_text * mult
               token_count = len(tokenizer.encode(prompt))
 
               # Baseline
-              b_mem = None
-              b_status = "FAIL"
+              b_mem = 0.0
               try:
-                  start_mem = get_memory_mb()
-                  start = time.time()
-                  tokens = mx.array([tokenizer.encode(prompt)])
-                  _ = model(tokens)  # simple forward
-                  b_mem = get_memory_mb() - start_mem
+                  start = get_memory_mb()
+                  _ = generate(model, tokenizer, prompt=prompt, max_tokens=20, verbose=False)
+                  b_mem = get_memory_mb() - start
                   b_status = "OK"
-              except Exception as e:
-                  b_status = f"FAIL({type(e).__name__[:10]})"
+              except:
+                  b_status = "FAIL"
 
-              # TurboQuant 3-bit
-              tq_mem = None
-              tq_status = "FAIL"
+              # TurboQuant
+              tq_mem = 0.0
               try:
                   cache = [TurboQuantKVCache(bits=3, head_dim=64) for _ in range(len(model.layers))]
-                  start_mem = get_memory_mb()
-                  start = time.time()
+                  start = get_memory_mb()
                   tokens = mx.array([tokenizer.encode(prompt)])
                   _ = model(tokens, cache=cache)
-                  tq_mem = get_memory_mb() - start_mem
+                  tq_mem = get_memory_mb() - start
                   tq_status = "OK"
-              except Exception as e:
-                  tq_status = f"FAIL({type(e).__name__[:10]})"
+              except:
+                  tq_status = "FAIL"
 
-              ratio = f"{b_mem / tq_mem:.1f}x" if b_mem is not None and tq_mem is not None and tq_mem > 0 else "N/A"
+              ratio = f"{b_mem / tq_mem:.1f}x" if tq_mem > 0 else "N/A"
 
-              print(f"{mult:6} | {token_count:8} | {b_status:12} | {tq_status:14} | {b_mem if b_mem is not None else 'N/A':12.1f} | {tq_mem if tq_mem is not None else 'N/A':12.1f} | {ratio:8}")
+              print(f"{mult:4} | {token_count:7} | {b_status:8} | {tq_status:8} | {b_mem:8.1f} | {tq_mem:8.1f} | {ratio:8}")
 
-          print("\n=== SUMMARY ===")
-          print("This is a fast test on a tiny model to check basic compression behavior.")
-          print("Look for consistently lower TQ Mem Δ at higher multipliers.")
-          print("For real agentic coding value, we need larger models + true generation loops.")
+          print("\nHarsh verdict: If TQ Mem is not consistently much lower than Base Mem, TurboQuant is not delivering compression here.")
           EOF
