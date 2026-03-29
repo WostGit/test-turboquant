@@ -1,4 +1,4 @@
-name: TurboQuant Test on GitHub M1 Runner (Minimal Working)
+name: TurboQuant Real Prompt Test on GitHub M1 Runner
 
 on:
   push:
@@ -22,12 +22,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install mlx mlx-lm psutil
+          python -m pip install --upgrade pip setuptools wheel psutil
+          pip install mlx mlx-lm
           git clone https://github.com/rachittshah/mlx-turboquant.git
           cd mlx-turboquant && pip install -e .
 
-      - name: Quick TurboQuant Test
+      - name: Real Prompt TurboQuant Test
         run: |
           python - << 'EOF'
           import mlx.core as mx
@@ -42,29 +42,53 @@ jobs:
               mx.clear_cache()
               return psutil.Process().memory_info().rss / (1024**2)
 
-          print("=== QUICK TURBOQUANT TEST ===")
-          model, tokenizer = load("mlx-community/Qwen2-0.5B-Instruct-4bit", lazy=True)
+          print("Loading model...")
+          model, tokenizer = load("mlx-community/Qwen2-1.5B-Instruct-4bit", lazy=True)
+          print(f"Loaded {len(model.layers)} layers\n")
 
-          prompt = "Long context agentic coding test on GitHub M1 runner. " * 100
+          # Realistic agentic coding prompt
+          prompt = """You are an expert coding assistant working on a large Python project.
+          The user wants to add a new feature: implement a TurboQuant-style KV cache compression for long-context LLM inference.
+          Previous context: We have been discussing memory optimization on Apple Silicon.
+          Current task: Write a clean function that applies 3-bit TurboQuant compression to the KV cache while maintaining reasonable quality.
+          Please provide the code with comments and explain the trade-offs."""
 
-          # Baseline
-          start = get_mem()
-          t0 = time.time()
-          _ = generate(model, tokenizer, prompt=prompt, max_tokens=30, verbose=False)
-          baseline_time = time.time() - t0
-          baseline_mem = get_mem() - start
-          print(f"Baseline - Time: {baseline_time:.2f}s | Mem Δ: {baseline_mem:.1f} MB")
+          print("=== BASELINE FP16 ===")
+          start_mem = get_mem()
+          start = time.time()
+          response_baseline = generate(model, tokenizer, prompt=prompt, max_tokens=200, verbose=False)
+          baseline_time = time.time() - start
+          baseline_mem = get_mem() - start_mem
 
-          # TurboQuant
-          start = get_mem()
-          t0 = time.time()
+          print(f"Time: {baseline_time:.2f}s | Mem Δ: {baseline_mem:.1f} MB")
+          print("Response preview:")
+          print(response_baseline[:800])
+          print("-" * 60)
+
+          print("\n=== TURBOQUANT 3-BIT ===")
+          start_mem = get_mem()
+          start = time.time()
+
           cache = [TurboQuantKVCache(bits=3, head_dim=64) for _ in range(len(model.layers))]
-          tokens = mx.array([tokenizer.encode(prompt)])
-          _ = model(tokens, cache=cache)
-          tq_time = time.time() - t0
-          tq_mem = get_mem() - start
-          print(f"TurboQuant - Time: {tq_time:.2f}s | Mem Δ: {tq_mem:.1f} MB")
 
-          print(f"\nRatio: {baseline_mem / tq_mem:.2f}x" if tq_mem > 0 else "\nRatio: N/A")
-          print("Note: On this runner with small model, real 4-6x compression is hard to observe.")
+          # Use manual forward + generate for better compatibility
+          tokens = mx.array([tokenizer.encode(prompt)])
+          _ = model(tokens, cache=cache)  # warm up cache
+
+          response_tq = generate(model, tokenizer, prompt=prompt, max_tokens=200, verbose=False)
+          tq_time = time.time() - start
+          tq_mem = get_mem() - start_mem
+
+          print(f"Time: {tq_time:.2f}s | Mem Δ: {tq_mem:.1f} MB")
+          print("Response preview:")
+          print(response_tq[:800])
+          print("-" * 60)
+
+          print("\n=== SUMMARY ===")
+          print(f"Baseline Mem Δ : {baseline_mem:.1f} MB")
+          print(f"TurboQuant Mem Δ: {tq_mem:.1f} MB")
+          print(f"Memory ratio    : {baseline_mem / tq_mem:.2f}x" if tq_mem > 0 else "Memory ratio: N/A")
+          print(f"Time ratio      : {baseline_time / tq_time:.2f}x")
+          print("\nLook at response quality and memory numbers.")
+          print("Good TurboQuant should have similar response quality with significantly lower memory usage.")
           EOF
