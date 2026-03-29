@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Upgrade pip and install build tools
+      - name: Upgrade pip and build tools
         run: |
           python -m pip install --upgrade pip setuptools wheel
 
@@ -28,10 +28,10 @@ jobs:
         run: |
           pip install mlx mlx-lm
 
-      - name: Install TurboQuant MLX (sharpner fork - reliable installation)
+      - name: Install TurboQuant MLX (sharpner fork)
         run: |
           git clone https://github.com/sharpner/turboquant-mlx.git
-          cd sharpner/turboquant-mlx
+          cd turboquant-mlx
           pip install -e .
 
       - name: Baseline Test (Standard FP16 KV Cache)
@@ -59,26 +59,26 @@ jobs:
           python - << 'EOF'
           import mlx.core as mx
           from mlx_lm import load
-          from turboquant_mlx import TurboQuantKVCache   # from sharpner fork
+          from turboquant_mlx import TurboQuantKVCache
           import time
 
           print("=== TURBOQUANT 3-BIT KV CACHE ===")
           model, tokenizer = load("mlx-community/SmolLM-135M-Instruct-4bit", lazy=True)
 
-          # Create TurboQuant cache for each layer
+          # Create one TurboQuantKVCache per layer
           cache = [TurboQuantKVCache(bits=3) for _ in range(len(model.layers))]
 
           prompt = ("Explain how KV cache compression enables longer contexts for agentic coding on memory-limited GitHub M1 runners. " * 60)
 
           start = time.time()
 
-          # Correct batched input for mlx_lm models
+          # Batched input required by mlx_lm models
           tokens = mx.array([tokenizer.encode(prompt)])
 
-          # Forward pass with custom TurboQuant cache
+          # Forward pass using the custom TurboQuant cache
           logits = model(tokens, cache=cache)
 
-          # Decode last generated tokens
+          # Decode the last ~80 generated tokens
           generated = logits.argmax(-1)[0, -80:].tolist()
           response = tokenizer.decode(generated)
 
@@ -86,15 +86,15 @@ jobs:
 
           print(f"Generation time: {duration:.2f}s")
           print(f"Response snippet: {response[:400]}...")
-          print("✅ TurboQuant 3-bit: SUCCESS (~4-6x smaller KV cache)\n")
+          print("✅ TurboQuant 3-bit: SUCCESS (~4-6x KV cache reduction expected)\n")
           EOF
 
       - name: Summary
         run: |
           echo "=== TEST SUMMARY ==="
           echo "Runner: GitHub macos-14 (M1, ~7 GB RAM)"
-          echo "Model: SmolLM-135M-4bit"
+          echo "Model: SmolLM-135M-4bit (tiny & safe)"
           echo ""
-          echo "✅ Both baseline and TurboQuant tests completed successfully!"
-          echo "TurboQuant now works on the constrained M1 runner."
-          echo "For agentic coding tests: increase the prompt multiplier dramatically (*200+) or switch to a 7B model to observe the real memory savings."
+          echo "✅ Both baseline and TurboQuant tests completed!"
+          echo "TurboQuant is now functional on the constrained M1 runner."
+          echo "For real agentic coding tests, increase prompt length (*200+) or switch to a 7B model."
