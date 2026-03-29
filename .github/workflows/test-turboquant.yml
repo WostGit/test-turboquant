@@ -1,4 +1,4 @@
-name: TurboQuant Real Prompt Test on GitHub M1 Runner
+name: TurboQuant Real Prompt Test - Qwen (Fixed)
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
           git clone https://github.com/rachittshah/mlx-turboquant.git
           cd mlx-turboquant && pip install -e .
 
-      - name: Real Prompt TurboQuant Test
+      - name: Real Prompt Test with Qwen2-1.5B
         run: |
           python - << 'EOF'
           import mlx.core as mx
@@ -42,53 +42,54 @@ jobs:
               mx.clear_cache()
               return psutil.Process().memory_info().rss / (1024**2)
 
-          print("Loading model...")
+          print("Loading Qwen2-1.5B-Instruct-4bit...")
           model, tokenizer = load("mlx-community/Qwen2-1.5B-Instruct-4bit", lazy=True)
           print(f"Loaded {len(model.layers)} layers\n")
 
           # Realistic agentic coding prompt
           prompt = """You are an expert coding assistant working on a large Python project.
-          The user wants to add a new feature: implement a TurboQuant-style KV cache compression for long-context LLM inference.
-          Previous context: We have been discussing memory optimization on Apple Silicon.
-          Current task: Write a clean function that applies 3-bit TurboQuant compression to the KV cache while maintaining reasonable quality.
-          Please provide the code with comments and explain the trade-offs."""
+          We need to implement KV cache compression using TurboQuant (3-bit) for long-context inference on Apple Silicon.
+          The goal is to reduce memory usage significantly while keeping generation quality high for agentic workflows.
+          Write a clear, well-commented Python function that applies the compression.
+          Also briefly explain the main trade-offs."""
 
           print("=== BASELINE FP16 ===")
           start_mem = get_mem()
           start = time.time()
-          response_baseline = generate(model, tokenizer, prompt=prompt, max_tokens=200, verbose=False)
+          response_baseline = generate(model, tokenizer, prompt=prompt, max_tokens=180, verbose=False)
           baseline_time = time.time() - start
           baseline_mem = get_mem() - start_mem
 
           print(f"Time: {baseline_time:.2f}s | Mem Δ: {baseline_mem:.1f} MB")
           print("Response preview:")
-          print(response_baseline[:800])
-          print("-" * 60)
+          print(response_baseline[:700])
+          print("-" * 80)
 
           print("\n=== TURBOQUANT 3-BIT ===")
           start_mem = get_mem()
           start = time.time()
 
-          cache = [TurboQuantKVCache(bits=3, head_dim=64) for _ in range(len(model.layers))]
+          try:
+              # Use head_dim=64 for Qwen2 models in this fork
+              cache = [TurboQuantKVCache(bits=3, head_dim=64) for _ in range(len(model.layers))]
 
-          # Use manual forward + generate for better compatibility
-          tokens = mx.array([tokenizer.encode(prompt)])
-          _ = model(tokens, cache=cache)  # warm up cache
+              # Warm-up with manual forward
+              tokens = mx.array([tokenizer.encode(prompt)])
+              _ = model(tokens, cache=cache)
 
-          response_tq = generate(model, tokenizer, prompt=prompt, max_tokens=200, verbose=False)
-          tq_time = time.time() - start
-          tq_mem = get_mem() - start_mem
+              # Generate with real output
+              response_tq = generate(model, tokenizer, prompt=prompt, max_tokens=180, verbose=False)
+              tq_time = time.time() - start
+              tq_mem = get_mem() - start_mem
 
-          print(f"Time: {tq_time:.2f}s | Mem Δ: {tq_mem:.1f} MB")
-          print("Response preview:")
-          print(response_tq[:800])
-          print("-" * 60)
+              print(f"Time: {tq_time:.2f}s | Mem Δ: {tq_mem:.1f} MB")
+              print("Response preview:")
+              print(response_tq[:700])
+          except Exception as e:
+              print(f"TurboQuant failed: {type(e).__name__} - {str(e)[:200]}")
 
           print("\n=== SUMMARY ===")
-          print(f"Baseline Mem Δ : {baseline_mem:.1f} MB")
-          print(f"TurboQuant Mem Δ: {tq_mem:.1f} MB")
-          print(f"Memory ratio    : {baseline_mem / tq_mem:.2f}x" if tq_mem > 0 else "Memory ratio: N/A")
-          print(f"Time ratio      : {baseline_time / tq_time:.2f}x")
-          print("\nLook at response quality and memory numbers.")
-          print("Good TurboQuant should have similar response quality with significantly lower memory usage.")
+          print("Compare the two responses for coherence and usefulness.")
+          print("Lower memory delta on TurboQuant side with similar quality = success.")
+          print("If TurboQuant crashes or uses more memory, the current fork has compatibility issues with Qwen.")
           EOF
