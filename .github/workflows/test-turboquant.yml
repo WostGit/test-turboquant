@@ -1,4 +1,4 @@
-name: TurboQuant Limit Test on GitHub M1 Runner
+name: TurboQuant Real Limit Benchmark on GitHub M1 Runner
 
 on:
   push:
@@ -8,14 +8,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  benchmark-turboquant:
+  benchmark:
     runs-on: macos-14
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -27,86 +27,78 @@ jobs:
           git clone https://github.com/rachittshah/mlx-turboquant.git
           cd mlx-turboquant && pip install -e .
 
-      - name: TurboQuant Limit Benchmark
+      - name: Run TurboQuant Limit Benchmark
         run: |
           python - << 'EOF'
           import mlx.core as mx
-          from mlx_lm import load
+          from mlx_lm import load, generate
           from mlx_turboquant.cache import TurboQuantKVCache
           import time
           import psutil
           import gc
 
-          def get_memory_mb():
+          def get_peak_memory():
               gc.collect()
+              mx.metal.clear_cache()
               return psutil.Process().memory_info().rss / (1024 ** 2)
 
-          model_name = "mlx-community/Llama-3.2-1B-Instruct-4bit"
-          print(f"Loading model: {model_name}")
-          model, tokenizer = load(model_name, lazy=True)
-          print(f"Model loaded with {len(model.layers)} layers\n")
+          print("Loading model...")
+          model, tokenizer = load("mlx-community/Llama-3.2-1B-Instruct-4bit", lazy=True)
+          print(f"Loaded {len(model.layers)} layers\n")
 
-          base_prompt = "KV cache compression for long-context agentic coding on memory-limited GitHub M1 runner with large codebases and multi-turn history. " * 50
-
-          print("=== TURBOQUANT vs BASELINE LIMIT TEST ===\n")
-          print("Context multiplier | Approx tokens | Baseline Status | TurboQuant Status | Baseline Mem (MB) | TQ Mem (MB) | Compression Ratio")
+          base_text = "Agentic coding task: analyze this large codebase, maintain full history, use tools, and iterate on fixes. " * 40
+          print("=== TURBOQUANT vs BASELINE REAL BENCHMARK ===\n")
+          print(f"{'Multiplier':>10} | {'~Tokens':>10} | {'Baseline':>15} | {'TurboQuant 3-bit':>18} | {'Baseline Mem Δ':>15} | {'TQ Mem Δ':>12} | {'Ratio':>8}")
+          print("-" * 90)
 
           results = []
-          for multiplier in [10, 50, 100, 200, 300, 400, 500]:
-              prompt = base_prompt * multiplier
-              tokens = len(tokenizer.encode(prompt))
-              print(f"\nTesting multiplier x{multiplier} (~{tokens} tokens)...")
+          for mult in [20, 50, 100, 150, 200, 250, 300]:
+              prompt = base_text * mult
+              token_count = len(tokenizer.encode(prompt))
 
-              # Baseline (FP16 KV Cache)
-              baseline_mem = None
+              # Baseline FP16
               baseline_ok = False
+              baseline_mem = None
               try:
-                  start_mem = get_memory_mb()
+                  start_mem = get_peak_memory()
                   start = time.time()
-                  response = model(mx.array([tokenizer.encode(prompt)]), cache=None)  # simple forward
-                  duration = time.time() - start
-                  end_mem = get_memory_mb()
-                  baseline_mem = end_mem - start_mem
+                  _ = generate(model, tokenizer, prompt=prompt, max_tokens=50, verbose=False)
+                  baseline_mem = get_peak_memory() - start_mem
                   baseline_ok = True
-                  status_b = "OK"
+                  b_status = "OK"
               except Exception as e:
-                  status_b = f"FAILED ({type(e).__name__})"
+                  b_status = f"FAIL ({type(e).__name__})"
 
               # TurboQuant 3-bit
-              tq_mem = None
               tq_ok = False
+              tq_mem = None
               try:
-                  head_dim = 64  # for Llama-3.2-1B
-                  cache = [TurboQuantKVCache(bits=3, head_dim=head_dim) for _ in range(len(model.layers))]
-
-                  start_mem = get_memory_mb()
+                  cache = [TurboQuantKVCache(bits=3, head_dim=64) for _ in range(len(model.layers))]
+                  start_mem = get_peak_memory()
                   start = time.time()
-                  tokens_tensor = mx.array([tokenizer.encode(prompt)])
-                  logits = model(tokens_tensor, cache=cache)
-                  duration = time.time() - start
-                  end_mem = get_memory_mb()
-                  tq_mem = end_mem - start_mem
+                  _ = generate(model, tokenizer, prompt=prompt, max_tokens=50, verbose=False, cache=cache)  # Note: may need patch for full support
+                  tq_mem = get_peak_memory() - start_mem
                   tq_ok = True
-                  status_tq = "OK"
+                  tq_status = "OK"
               except Exception as e:
-                  status_tq = f"FAILED ({type(e).__name__})"
+                  tq_status = f"FAIL ({type(e).__name__})"
 
-              ratio = f"{baseline_mem / tq_mem:.1f}x" if baseline_mem and tq_mem else "N/A"
+              ratio = f"{baseline_mem / tq_mem:.1f}x" if baseline_mem and tq_mem and tq_mem > 0 else "N/A"
 
-              print(f"{multiplier:17} | {tokens:12} | {status_b:15} | {status_tq:15} | {baseline_mem or 'N/A':14} | {tq_mem or 'N/A':12} | {ratio}")
+              print(f"{mult:10} | {token_count:10} | {b_status:15} | {tq_status:18} | {baseline_mem or 'N/A':14.1f} | {tq_mem or 'N/A':12.1f} | {ratio:8}")
 
-              results.append((multiplier, tokens, baseline_ok, tq_ok, baseline_mem, tq_mem))
+              results.append((mult, token_count, baseline_ok, tq_ok, baseline_mem, tq_mem))
 
-              if not tq_ok and not baseline_ok:
-                  print("Both failed - hitting hard memory limit.")
+              if not tq_ok:
+                  print("TurboQuant hit limit.")
                   break
 
-          print("\n=== FINAL SUMMARY ===")
-          print("On GitHub M1 runner (~7 GB RAM):")
-          max_baseline = max((r[1] for r in results if r[2]), default=0)
+          print("\n=== FINAL HARSH SUMMARY ===")
+          max_b = max((r[1] for r in results if r[2]), default=0)
           max_tq = max((r[1] for r in results if r[3]), default=0)
-          print(f"Baseline max viable context: ~{max_baseline} tokens")
-          print(f"TurboQuant max viable context: ~{max_tq} tokens")
-          print(f"Improvement: {max_tq / max_baseline:.1f}x longer context (if any)")
-          print("This directly shows what TurboQuant enables for agentic coding workflows.")
+          print(f"Baseline viable context: ~{max_b:,} tokens")
+          print(f"TurboQuant viable context: ~{max_tq:,} tokens")
+          print(f"Context improvement: {max_tq / max_b:.1f}x (if >1.0)")
+          print("If TurboQuant shows significantly lower memory delta while maintaining OK status at higher multipliers, it delivers value for agentic coding.")
+          print("Negative or near-zero ratios indicate measurement issues or no real compression benefit in this setup.")
           EOF
