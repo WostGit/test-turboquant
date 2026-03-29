@@ -23,17 +23,19 @@ jobs:
       - name: Fix build environment (legacy setuptools)
         run: |
           python -m pip install --upgrade pip
-          pip install "setuptools==69.5.1" wheel
+          pip install "setuptools==69.5.1" wheel  # Stable legacy version
 
       - name: Install MLX and mlx-lm
         run: |
           pip install mlx mlx-lm
 
-      - name: Install TurboQuant MLX (arozanov - recommended)
+      - name: Install TurboQuant MLX (arozanov fork)
         run: |
-          pip install git+https://github.com/arozanov/turboquant-mlx.git
+          git clone https://github.com/arozanov/turboquant-mlx.git
+          cd turboquant-mlx
+          pip install -e .
 
-      - name: Baseline Test (FP16 KV Cache)
+      - name: Baseline Test (Standard FP16 KV Cache)
         run: |
           python - << 'EOF'
           from mlx_lm import load, generate
@@ -42,45 +44,43 @@ jobs:
           print("=== BASELINE FP16 KV CACHE ===")
           model, tokenizer = load("mlx-community/SmolLM-135M-Instruct-4bit", lazy=True)
 
-          prompt = ("Explain KV cache compression for long-context agentic coding on GitHub M1 runner. " * 80)
+          prompt = ("KV cache compression enables longer contexts for agentic coding on memory-limited GitHub M1 runner. " * 80)
 
           start = time.time()
           response = generate(model, tokenizer, prompt=prompt, max_tokens=80, verbose=False)
           duration = time.time() - start
 
           print(f"Time: {duration:.2f}s")
-          print(f"Response: {response[:400]}...")
+          print(f"Response snippet: {response[:400]}...")
           print("✅ Baseline: SUCCESS\n")
           EOF
 
-      - name: TurboQuant Test (3-bit Adaptive)
+      - name: TurboQuant Test (3-bit Adaptive KV Cache)
         run: |
           python - << 'EOF'
           from mlx_lm import load, generate
           from turboquant_mlx import make_adaptive_cache, apply_patch
           import time
 
-          print("=== TURBOQUANT 3-BIT ADAPTIVE KV CACHE ===")
+          print("=== TURBOQUANT 3-BIT ADAPTIVE ===")
           model, tokenizer = load("mlx-community/SmolLM-135M-Instruct-4bit", lazy=True)
 
-          # Apply patch for mlx_lm compatibility
           apply_patch()
 
-          # Adaptive cache with boundary layer protection (more robust on small models)
           cache = make_adaptive_cache(
               num_layers=len(model.layers),
               bits=3,
-              fp16_layers=1   # protect first & last layer
+              fp16_layers=1  # Protect first & last layer for stability
           )
 
-          prompt = ("Explain KV cache compression for long-context agentic coding on GitHub M1 runner. " * 80)
+          prompt = ("KV cache compression enables longer contexts for agentic coding on memory-limited GitHub M1 runner. " * 80)
 
           start = time.time()
           response = generate(model, tokenizer, prompt=prompt, max_tokens=80, verbose=False)
           duration = time.time() - start
 
           print(f"Time: {duration:.2f}s")
-          print(f"Response: {response[:400]}...")
+          print(f"Response snippet: {response[:400]}...")
           print("✅ TurboQuant 3-bit adaptive: SUCCESS (~4-6x KV cache reduction)\n")
           EOF
 
@@ -90,5 +90,6 @@ jobs:
           echo "Runner: GitHub macos-14 (M1, ~7 GB RAM)"
           echo "Model: SmolLM-135M-4bit"
           echo ""
-          echo "If both steps passed, TurboQuant is working."
-          echo "This enables much longer contexts for agentic coding tests on the constrained runner."
+          echo "If both tests passed, TurboQuant is working on the M1 runner."
+          echo "This confirms it can enable longer contexts for agentic coding (e.g., keeping large codebases + history in RAM)."
+          echo "Next step: Increase prompt length (*300+) or switch to a 7B model to see the memory win clearly."
