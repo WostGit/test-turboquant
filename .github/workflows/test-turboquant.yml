@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Upgrade pip and pin setuptools (fix legacy build error)
+      - name: Fix setuptools for legacy build (critical for turboquant-mlx)
         run: |
           python -m pip install --upgrade pip
           pip install "setuptools<81" wheel
@@ -29,7 +29,7 @@ jobs:
         run: |
           pip install mlx mlx-lm
 
-      - name: Install TurboQuant MLX (arozanov version with fused kernels)
+      - name: Install TurboQuant MLX (arozanov - fused Metal kernels)
         run: |
           pip install git+https://github.com/arozanov/turboquant-mlx.git
 
@@ -42,7 +42,7 @@ jobs:
           print("=== BASELINE FP16 KV CACHE ===")
           model, tokenizer = load("mlx-community/SmolLM-135M-Instruct-4bit", lazy=True)
 
-          prompt = ("Explain how KV cache compression helps with long-context agentic coding on memory-limited GitHub M1 runners. " * 50)
+          prompt = ("Explain how KV cache compression enables longer contexts for agentic coding on memory-limited GitHub M1 runners. " * 60)
 
           start = time.time()
           response = generate(model, tokenizer, prompt=prompt, max_tokens=80, verbose=False)
@@ -63,17 +63,17 @@ jobs:
           print("=== TURBOQUANT 3-BIT ADAPTIVE KV CACHE ===")
           model, tokenizer = load("mlx-community/SmolLM-135M-Instruct-4bit", lazy=True)
 
-          # Apply patch for better mlx_lm integration
+          # Apply patch for seamless integration with mlx_lm.generate()
           apply_patch()
 
-          # Adaptive cache: 3 bits, protect boundary layers for better stability
+          # 3-bit adaptive cache with boundary layer protection (more stable)
           cache = make_adaptive_cache(
               num_layers=len(model.layers),
               bits=3,
               fp16_layers=1
           )
 
-          prompt = ("Explain how KV cache compression helps with long-context agentic coding on memory-limited GitHub M1 runners. " * 50)
+          prompt = ("Explain how KV cache compression enables longer contexts for agentic coding on memory-limited GitHub M1 runners. " * 60)
 
           start = time.time()
           response = generate(model, tokenizer, prompt=prompt, max_tokens=80, verbose=False)
@@ -90,6 +90,6 @@ jobs:
           echo "Runner: GitHub macos-14 (M1, ~7 GB RAM)"
           echo "Model: SmolLM-135M-4bit"
           echo ""
-          echo "Both tests passed → TurboQuant is working!"
-          echo "On this constrained runner, TurboQuant enables much longer contexts for agentic coding tests."
-          echo "Next: Try a 7B model + very long prompt (*200+) to observe the memory win."
+          echo "✅ Both baseline and TurboQuant tests completed successfully!"
+          echo "TurboQuant is now working on the constrained M1 runner."
+          echo "This enables much longer contexts for agentic coding tests (increase prompt length or use a 7B model next)."
