@@ -1,4 +1,4 @@
-name: TurboQuant Real Limit Benchmark on GitHub M1 Runner
+name: TurboQuant Fast Limit Benchmark on GitHub M1 Runner
 
 on:
   push:
@@ -27,11 +27,11 @@ jobs:
           git clone https://github.com/rachittshah/mlx-turboquant.git
           cd mlx-turboquant && pip install -e .
 
-      - name: Run TurboQuant Limit Benchmark
+      - name: Fast TurboQuant Benchmark
         run: |
           python - << 'EOF'
           import mlx.core as mx
-          from mlx_lm import load, generate
+          from mlx_lm import load
           from mlx_turboquant.cache import TurboQuantKVCache
           import time
           import psutil
@@ -39,20 +39,20 @@ jobs:
 
           def get_memory_mb():
               gc.collect()
-              mx.clear_cache()  # Fixed: use mx.clear_cache()
+              mx.clear_cache()
               return psutil.Process().memory_info().rss / (1024 ** 2)
 
-          print("Loading model...")
-          model, tokenizer = load("mlx-community/Llama-3.2-1B-Instruct-4bit", lazy=True)
+          print("Loading fast small model...")
+          model, tokenizer = load("mlx-community/Qwen2-0.5B-Instruct-4bit", lazy=True)
           print(f"Loaded {len(model.layers)} layers\n")
 
-          base_text = "Agentic coding task: analyze large codebase, maintain full conversation history, use tools, iterate on fixes. " * 30
+          base_text = "Agentic coding: analyze codebase, keep history, use tools, fix iteratively. " * 20
 
-          print("=== TURBOQUANT vs BASELINE REAL BENCHMARK ===\n")
+          print("=== FAST TURBOQUANT BENCHMARK ===\n")
           print(f"{'Mult':>6} | {'~Tokens':>8} | {'Baseline':>12} | {'TQ 3-bit':>14} | {'Base Mem Δ':>12} | {'TQ Mem Δ':>12} | {'Ratio':>8}")
           print("-" * 85)
 
-          for mult in [10, 30, 60, 100, 150, 200]:
+          for mult in [10, 30, 60, 100, 150]:
               prompt = base_text * mult
               token_count = len(tokenizer.encode(prompt))
 
@@ -62,13 +62,14 @@ jobs:
               try:
                   start_mem = get_memory_mb()
                   start = time.time()
-                  _ = generate(model, tokenizer, prompt=prompt, max_tokens=30, verbose=False)
+                  tokens = mx.array([tokenizer.encode(prompt)])
+                  _ = model(tokens)  # simple forward
                   b_mem = get_memory_mb() - start_mem
                   b_status = "OK"
               except Exception as e:
-                  b_status = f"FAIL({type(e).__name__})"
+                  b_status = f"FAIL({type(e).__name__[:10]})"
 
-              # TurboQuant
+              # TurboQuant 3-bit
               tq_mem = None
               tq_status = "FAIL"
               try:
@@ -76,18 +77,18 @@ jobs:
                   start_mem = get_memory_mb()
                   start = time.time()
                   tokens = mx.array([tokenizer.encode(prompt)])
-                  _ = model(tokens, cache=cache)  # Manual forward for compatibility
+                  _ = model(tokens, cache=cache)
                   tq_mem = get_memory_mb() - start_mem
                   tq_status = "OK"
               except Exception as e:
-                  tq_status = f"FAIL({type(e).__name__})"
+                  tq_status = f"FAIL({type(e).__name__[:10]})"
 
               ratio = f"{b_mem / tq_mem:.1f}x" if b_mem is not None and tq_mem is not None and tq_mem > 0 else "N/A"
 
               print(f"{mult:6} | {token_count:8} | {b_status:12} | {tq_status:14} | {b_mem if b_mem is not None else 'N/A':12.1f} | {tq_mem if tq_mem is not None else 'N/A':12.1f} | {ratio:8}")
 
           print("\n=== SUMMARY ===")
-          print("Look at Mem Δ columns for real compression.")
-          print("If TurboQuant maintains OK status at higher multipliers with lower memory, it helps agentic coding.")
-          print("Negative or unstable ratios = measurement noise (common on small models).")
+          print("This is a fast test on a tiny model to check basic compression behavior.")
+          print("Look for consistently lower TQ Mem Δ at higher multipliers.")
+          print("For real agentic coding value, we need larger models + true generation loops.")
           EOF
