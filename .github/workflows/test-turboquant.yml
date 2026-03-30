@@ -1,4 +1,4 @@
-name: TurboQuant Real Prompt Test - TinyLlama (Correct Indentation)
+name: TurboQuant Mega Test - All Options (Correct Indentation)
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
           git clone https://github.com/rachittshah/mlx-turboquant.git
           cd mlx-turboquant && pip install -e .
 
-      - name: Real Prompt Test with TinyLlama
+      - name: Real Prompt Test - All Options
         env:
           HF_TOKEN: "dummy_token_to_suppress_warning"
         run: |
@@ -45,70 +45,68 @@ jobs:
               mx.clear_cache()
               return psutil.Process().memory_info().rss / (1024**2)
 
-          # FIXED: Swapped to TinyLlama-1.1B (Fast download, native 64-dim heads)
-          print("Loading TinyLlama-1.1B-Chat-v1.0-4bit...")
-          model, tokenizer = load("mlx-community/TinyLlama-1.1B-Chat-v1.0-4bit", lazy=True)
-          print(f"Loaded {len(model.layers)} layers\n")
-
-          # Using standard TinyLlama chat template format
-          prompt = "<|user|>\nWe need to add long-context support using KV cache compression. Please implement a 3-bit TurboQuant style compression layer.<|assistant|>\n"
-
-          current_sampler = make_sampler(temp=0.6)
-
-          print("=== BASELINE ===")
-          start_mem = get_mem()
-          start = time.time()
-          
-          response_baseline = generate(
-              model, 
-              tokenizer, 
-              prompt=prompt, 
-              max_tokens=150, 
-              verbose=False, 
-              sampler=current_sampler
-          )
-          baseline_time = time.time() - start
-          baseline_mem = get_mem() - start_mem
-
-          print(f"Time: {baseline_time:.2f}s | Mem Δ: {baseline_mem:.1f} MB")
-          print("Response preview:")
-          print(response_baseline[:500])
-          print("-" * 80)
-
-          print("\n=== TURBOQUANT 3-BIT ===")
-          start_mem = get_mem()
-          start = time.time()
-
-          try:
-              # Dynamically query dimensions from model configuration
-              head_dim = model.args.hidden_size // model.args.num_attention_heads
-              print(f"Initializing TurboQuant cache with head_dim={head_dim}...")
+          def run_test(model_name, prompt, bits, head_dim):
+              print(f"\n🚀 Loading {model_name}...")
+              model, tokenizer = load(model_name, lazy=True)
+              sampler = make_sampler(temp=0.6)
               
-              cache = [TurboQuantKVCache(bits=3, head_dim=head_dim) for _ in range(len(model.layers))]
+              print("=== BASELINE ===")
+              start_mem = get_mem()
+              start = time.time()
+              
+              resp_base = generate(model, tokenizer, prompt=prompt, max_tokens=100, verbose=False, sampler=sampler)
+              base_time = time.time() - start
+              base_mem = get_mem() - start_mem
+              print(f"Time: {base_time:.2f}s | Mem Δ: {base_mem:.1f} MB")
+              print(f"Preview: {resp_base[:300].replace('\n', ' ')}")
+              print("-" * 50)
 
-              # Warm-up cache
-              tokens = mx.array([tokenizer.encode(prompt)])
-              _ = model(tokens, cache=cache)
+              print(f"=== TURBOQUANT {bits}-BIT ===")
+              start_mem = get_mem()
+              start = time.time()
+              
+              try:
+                  cache = [TurboQuantKVCache(bits=bits, head_dim=head_dim) for _ in range(len(model.layers))]
+                  
+                  # Warm up
+                  tokens = mx.array([tokenizer.encode(prompt)])
+                  _ = model(tokens, cache=cache)
+                  
+                  resp_tq = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=100, verbose=False, sampler=sampler)
+                  tq_time = time.time() - start
+                  tq_mem = get_mem() - start_mem
+                  print(f"Time: {tq_time:.2f}s | Mem Δ: {tq_mem:.1f} MB")
+                  print(f"Preview: {resp_tq[:300].replace('\n', ' ')}")
+              except Exception as e:
+                  print(f"Failed: {type(e).__name__} - {str(e)[:100]}")
+              
+              # Cleanup to prevent runner from running out of memory
+              del model
+              del tokenizer
+              gc.collect()
+              mx.clear_cache()
 
-              # Generate real response passing the custom cache
-              response_tq = generate(
-                  model, 
-                  tokenizer, 
-                  prompt=prompt, 
-                  prompt_cache=cache, 
-                  max_tokens=150, 
-                  verbose=False, 
-                  sampler=current_sampler
-              )
-              tq_time = time.time() - start
-              tq_mem = get_mem() - start_mem
+          # Common prompt
+          prompt_text = "We need to add long-context support using KV cache compression. Please implement a 3-bit TurboQuant style compression layer."
 
-              print(f"Time: {tq_time:.2f}s | Mem Δ: {tq_mem:.1f} MB")
-              print("Response preview:")
-              print(response_tq[:500])
-          except Exception as e:
-              print(f"TurboQuant failed: {type(e).__name__} - {str(e)[:300]}")
+          # =====================================================================
+          # OPTION A: Qwen 3B with 4-Bit Cache (Head Dim = 128)
+          # =====================================================================
+          print("\n=== TEST 1: QWEN 3B @ 4-BIT KV CACHE ===")
+          qwen_prompt = f"<|im_start|>user\n{prompt_text}<|im_end|>\n<|im_start|>assistant\n"
+          run_test("mlx-community/Qwen2.5-3B-Instruct-4bit", qwen_prompt, bits=4, head_dim=128)
 
-          print("\n=== SUMMARY ===")
-          print("If this fails or repeats characters, 3-bit is simply too low precision for sub-7B models on this fork.")
+          # =====================================================================
+          # OPTION B: TinyLlama with 3-Bit Cache (Head Dim = 64)
+          # =====================================================================
+          print("\n=== TEST 2: TINYLLAMA @ 3-BIT KV CACHE ===")
+          llama_prompt = f"<|user|>\n{prompt_text}<|assistant|>\n"
+          run_test("mlx-community/TinyLlama-1.1B-Chat-v1.0-4bit", llama_prompt, bits=3, head_dim=64)
+
+          # =====================================================================
+          # OPTION C: TinyLlama with 4-Bit Cache (Head Dim = 64)
+          # =====================================================================
+          print("\n=== TEST 3: TINYLLAMA @ 4-BIT KV CACHE ===")
+          run_test("mlx-community/TinyLlama-1.1B-Chat-v1.0-4bit", llama_prompt, bits=4, head_dim=64)
+
           EOF
