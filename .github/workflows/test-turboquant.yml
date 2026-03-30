@@ -34,7 +34,7 @@ jobs:
           python - << 'EOF'
           import mlx.core as mx
           from mlx_lm import load, generate
-          from mlx_lm.sample_utils import make_sampler  # FIXED: Importing the sampler utility
+          from mlx_lm.sample_utils import make_sampler
           from mlx_turboquant.cache import TurboQuantKVCache
           import time
           import psutil
@@ -56,14 +56,12 @@ jobs:
           ]
           prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-          # FIXED: Bundling temp and penalty parameters into an explicit sampler
           current_sampler = make_sampler(temp=0.7)
 
           print("=== BASELINE FP16 ===")
           start_mem = get_mem()
           start = time.time()
           
-          # Pass the sampler instead of loose temp kwargs
           response_baseline = generate(
               model, 
               tokenizer, 
@@ -95,12 +93,12 @@ jobs:
               tokens = mx.array([tokenizer.encode(prompt)])
               _ = model(tokens, cache=cache)
 
-              # Generate real response passing the same sampler and the custom cache
+              # FIXED: Changed 'cache=cache' to 'prompt_cache=cache' to comply with mlx-lm API
               response_tq = generate(
                   model, 
                   tokenizer, 
                   prompt=prompt, 
-                  cache=cache, 
+                  prompt_cache=cache, 
                   max_tokens=250, 
                   verbose=False, 
                   sampler=current_sampler
