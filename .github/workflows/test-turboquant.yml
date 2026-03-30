@@ -1,4 +1,4 @@
-name: TurboQuant Mega Test - All Options (Correct Indentation)
+name: TurboQuant Final Working Test - Qwen 3B 4-Bit
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
           git clone https://github.com/rachittshah/mlx-turboquant.git
           cd mlx-turboquant && pip install -e .
 
-      - name: Real Prompt Test - All Options
+      - name: Final Qwen 3B 4-Bit Test
         env:
           HF_TOKEN: "dummy_token_to_suppress_warning"
         run: |
@@ -45,77 +45,47 @@ jobs:
               mx.clear_cache()
               return psutil.Process().memory_info().rss / (1024**2)
 
-          def run_test(model_name, prompt, bits, head_dim):
-              print(f"\n🚀 Loading {model_name}...")
-              try:
-                  model, tokenizer = load(model_name, lazy=True)
-              except Exception as e:
-                  print(f"Failed to load model {model_name}: {e}")
-                  return
-                  
-              sampler = make_sampler(temp=0.6)
-              
-              print("=== BASELINE ===")
-              start_mem = get_mem()
-              start = time.time()
-              
-              resp_base = generate(model, tokenizer, prompt=prompt, max_tokens=100, verbose=False, sampler=sampler)
-              base_time = time.time() - start
-              base_mem = get_mem() - start_mem
-              
-              preview_base = resp_base[:300].replace('\n', ' ')
-              print(f"Time: {base_time:.2f}s | Mem Δ: {base_mem:.1f} MB")
-              print(f"Preview: {preview_base}")
-              print("-" * 50)
+          model_name = "mlx-community/Qwen2.5-3B-Instruct-4bit"
+          print(f"🚀 Loading {model_name}...")
+          model, tokenizer = load(model_name, lazy=True)
+          sampler = make_sampler(temp=0.6)
 
-              print(f"=== TURBOQUANT {bits}-BIT ===")
-              start_mem = get_mem()
-              start = time.time()
-              
-              try:
-                  cache = [TurboQuantKVCache(bits=bits, head_dim=head_dim) for _ in range(len(model.layers))]
-                  
-                  # Warm up
-                  tokens = mx.array([tokenizer.encode(prompt)])
-                  _ = model(tokens, cache=cache)
-                  
-                  resp_tq = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=100, verbose=False, sampler=sampler)
-                  tq_time = time.time() - start
-                  tq_mem = get_mem() - start_mem
-                  
-                  preview_tq = resp_tq[:300].replace('\n', ' ')
-                  print(f"Time: {tq_time:.2f}s | Mem Δ: {tq_mem:.1f} MB")
-                  print(f"Preview: {preview_tq}")
-              except Exception as e:
-                  print(f"Failed in TurboQuant execution: {type(e).__name__} - {str(e)[:100]}")
-              
-              # Cleanup to prevent runner from running out of memory
-              del model
-              del tokenizer
-              gc.collect()
-              mx.clear_cache()
-
-          # Common prompt
-          prompt_text = "We need to add long-context support using KV cache compression. Please implement a 3-bit TurboQuant style compression layer."
-
-          # =====================================================================
-          # OPTION A: Qwen 3B with 4-Bit Cache (Head Dim = 128)
-          # =====================================================================
-          print("\n=== TEST 1: QWEN 3B @ 4-BIT KV CACHE ===")
+          prompt_text = "We need to add long-context support using KV cache compression. Please implement a 3-bit TurboQuant style compression layer in Python."
           qwen_prompt = f"<|im_start|>user\n{prompt_text}<|im_end|>\n<|im_start|>assistant\n"
-          run_test("mlx-community/Qwen2.5-3B-Instruct-4bit", qwen_prompt, bits=4, head_dim=128)
 
-          # =====================================================================
-          # OPTION B: TinyLlama with 3-Bit Cache (Head Dim = 64) - FIXED MODEL PATH
-          # =====================================================================
-          print("\n=== TEST 2: TINYLLAMA @ 3-BIT KV CACHE ===")
-          llama_prompt = f"<|user|>\n{prompt_text}<|assistant|>\n"
-          run_test("mlx-community/TinyLlama-1.1B-Chat-v1.0", llama_prompt, bits=3, head_dim=64)
+          print("\n=== BASELINE ===")
+          start_mem = get_mem()
+          start = time.time()
+          
+          resp_base = generate(model, tokenizer, prompt=qwen_prompt, max_tokens=200, verbose=False, sampler=sampler)
+          base_time = time.time() - start
+          base_mem = get_mem() - start_mem
+          
+          print(f"Time: {base_time:.2f}s | Mem Δ: {base_mem:.1f} MB")
+          print("Baseline Output:")
+          print(resp_base)
+          print("-" * 50)
 
-          # =====================================================================
-          # OPTION C: TinyLlama with 4-Bit Cache (Head Dim = 64) - FIXED MODEL PATH
-          # =====================================================================
-          print("\n=== TEST 3: TINYLLAMA @ 4-BIT KV CACHE ===")
-          run_test("mlx-community/TinyLlama-1.1B-Chat-v1.0", llama_prompt, bits=4, head_dim=64)
-
+          print("\n=== TURBOQUANT 4-BIT ===")
+          start_mem = get_mem()
+          start = time.time()
+          
+          try:
+              head_dim = model.args.hidden_size // model.args.num_attention_heads
+              cache = [TurboQuantKVCache(bits=4, head_dim=head_dim) for _ in range(len(model.layers))]
+              
+              # Warm up
+              tokens = mx.array([tokenizer.encode(qwen_prompt)])
+              _ = model(tokens, cache=cache)
+              
+              resp_tq = generate(model, tokenizer, prompt=qwen_prompt, prompt_cache=cache, max_tokens=200, verbose=False, sampler=sampler)
+              tq_time = time.time() - start
+              tq_mem = get_mem() - start_mem
+              
+              print(f"Time: {tq_time:.2f}s | Mem Δ: {tq_mem:.1f} MB")
+              print("TurboQuant Output:")
+              print(resp_tq)
+          except Exception as e:
+              print(f"Failed in TurboQuant execution: {type(e).__name__} - {str(e)[:100]}")
+              
           EOF
