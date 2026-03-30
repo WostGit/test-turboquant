@@ -57,8 +57,11 @@ jobs:
               resp_base = generate(model, tokenizer, prompt=prompt, max_tokens=100, verbose=False, sampler=sampler)
               base_time = time.time() - start
               base_mem = get_mem() - start_mem
+              
+              # FIXED: Moved the string replace outside of the f-string expression
+              preview_base = resp_base[:300].replace('\n', ' ')
               print(f"Time: {base_time:.2f}s | Mem Δ: {base_mem:.1f} MB")
-              print(f"Preview: {resp_base[:300].replace('\n', ' ')}")
+              print(f"Preview: {preview_base}")
               print("-" * 50)
 
               print(f"=== TURBOQUANT {bits}-BIT ===")
@@ -75,8 +78,11 @@ jobs:
                   resp_tq = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=100, verbose=False, sampler=sampler)
                   tq_time = time.time() - start
                   tq_mem = get_mem() - start_mem
+                  
+                  # FIXED: Moved the string replace outside of the f-string expression
+                  preview_tq = resp_tq[:300].replace('\n', ' ')
                   print(f"Time: {tq_time:.2f}s | Mem Δ: {tq_mem:.1f} MB")
-                  print(f"Preview: {resp_tq[:300].replace('\n', ' ')}")
+                  print(f"Preview: {preview_tq}")
               except Exception as e:
                   print(f"Failed: {type(e).__name__} - {str(e)[:100]}")
               
