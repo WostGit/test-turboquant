@@ -1,4 +1,4 @@
-name: TurboQuant Forced Execution Test
+name: TurboQuant Forced Execution Test - Fixed
 
 on:
   push:
@@ -57,24 +57,27 @@ jobs:
           EOF
 
       # =====================================================================
-      # REPO 2: Forcing the installer to ignore broken setuptools backend
+      # REPO 2: Bypassing the installer entirely by moving files
       # =====================================================================
-      - name: Test Repo 2 - Anton Rozanov (Bypassing Broken Installer)
+      - name: Test Repo 2 - Anton Rozanov (Path Hack)
         continue-on-error: true
         run: |
           git clone https://github.com/arozanov/turboquant-mlx.git
-          cd turboquant-mlx
-          
-          # FORCE: We are ignoring his setup.py and manually installing via wheel
-          pip install . --no-build-isolation --use-pep517
           
           python - << 'EOF'
-          import mlx.core as mx
-          from mlx_lm import load, generate
+          import sys
+          import os
+          
+          # FORCE: We inject his folder directly into the Python path, ignoring setup.py!
+          repo_path = os.path.abspath("turboquant-mlx")
+          sys.path.append(repo_path)
           
           try:
+              import mlx.core as mx
+              from mlx_lm import load, generate
               from turboquant_mlx import make_adaptive_cache, apply_patch
-              print("✅ Successfully bypassed broken installer!")
+              
+              print("✅ Successfully bypassed broken installer using sys.path hack!")
               
               model_name = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
               model, tokenizer = load(model_name, lazy=True)
