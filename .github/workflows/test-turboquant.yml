@@ -1,4 +1,4 @@
-name: TurboQuant Real Prompt Test - Qwen (Fixed)
+name: TurboQuant Real Prompt Test - Qwen (Correct Indentation)
 
 on:
   push:
@@ -48,10 +48,8 @@ jobs:
 
           # Realistic agentic coding prompt
           prompt = """You are an expert coding assistant working on a large Python project.
-          We need to implement KV cache compression using TurboQuant (3-bit) for long-context inference on Apple Silicon.
-          The goal is to reduce memory usage significantly while keeping generation quality high for agentic workflows.
-          Write a clear, well-commented Python function that applies the compression.
-          Also briefly explain the main trade-offs."""
+          We need to add long-context support using KV cache compression.
+          Please implement a 3-bit TurboQuant style compression layer and explain the main trade-offs for agentic coding workflows."""
 
           print("=== BASELINE FP16 ===")
           start_mem = get_mem()
@@ -70,14 +68,13 @@ jobs:
           start = time.time()
 
           try:
-              # Use head_dim=64 for Qwen2 models in this fork
               cache = [TurboQuantKVCache(bits=3, head_dim=64) for _ in range(len(model.layers))]
 
-              # Warm-up with manual forward
+              # Warm-up cache
               tokens = mx.array([tokenizer.encode(prompt)])
               _ = model(tokens, cache=cache)
 
-              # Generate with real output
+              # Generate real response
               response_tq = generate(model, tokenizer, prompt=prompt, max_tokens=180, verbose=False)
               tq_time = time.time() - start
               tq_mem = get_mem() - start_mem
@@ -86,10 +83,10 @@ jobs:
               print("Response preview:")
               print(response_tq[:700])
           except Exception as e:
-              print(f"TurboQuant failed: {type(e).__name__} - {str(e)[:200]}")
+              print(f"TurboQuant failed: {type(e).__name__} - {str(e)[:300]}")
 
           print("\n=== SUMMARY ===")
-          print("Compare the two responses for coherence and usefulness.")
-          print("Lower memory delta on TurboQuant side with similar quality = success.")
-          print("If TurboQuant crashes or uses more memory, the current fork has compatibility issues with Qwen.")
+          print("Compare coherence and usefulness of both responses.")
+          print("If TurboQuant response is similar in quality but uses significantly less memory, it is working.")
+          print("If it crashes with matmul error, the fork has compatibility issues with this Qwen model.")
           EOF
