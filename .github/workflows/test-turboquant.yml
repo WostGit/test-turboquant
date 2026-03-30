@@ -1,4 +1,4 @@
-name: TurboQuant Forced Execution Test - Fixed
+name: TurboQuant Final Fixed Execution
 
 on:
   push:
@@ -26,9 +26,9 @@ jobs:
           pip install mlx mlx-lm numpy
 
       # =====================================================================
-      # REPO 1: Forcing 8-bit to stop cognitive collapse
+      # REPO 1: Rachitt Shah (Fixed to max-supported 4-bit)
       # =====================================================================
-      - name: Test Repo 1 - Rachitt Shah (Pushed to 8-bit)
+      - name: Test Repo 1 - Rachitt Shah (Fixed 4-bit)
         continue-on-error: true
         run: |
           git clone https://github.com/rachittshah/mlx-turboquant.git
@@ -46,10 +46,11 @@ jobs:
           
           try:
               head_dim = model.args.hidden_size // model.args.num_attention_heads
-              # PUSHED TO 8-BIT: This prevents the '!!!!!!!!' overflow errors on tiny models
-              cache = [TurboQuantKVCache(bits=8, head_dim=head_dim) for _ in range(len(model.layers))]
               
-              print("▶ Running Rachitt Shah (8-bit)...")
+              # FIXED: Reverted to 4-bits so the Lloyds-Max codebook doesn't throw a missing file error
+              cache = [TurboQuantKVCache(bits=4, head_dim=head_dim) for _ in range(len(model.layers))]
+              
+              print("▶ Running Rachitt Shah (4-bit)...")
               resp = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=15, verbose=False)
               print(f"Result: {resp.strip()}")
           except Exception as e:
@@ -57,7 +58,7 @@ jobs:
           EOF
 
       # =====================================================================
-      # REPO 2: Bypassing the installer entirely by moving files
+      # REPO 2: Anton Rozanov (Verified Path Hack)
       # =====================================================================
       - name: Test Repo 2 - Anton Rozanov (Path Hack)
         continue-on-error: true
@@ -68,7 +69,6 @@ jobs:
           import sys
           import os
           
-          # FORCE: We inject his folder directly into the Python path, ignoring setup.py!
           repo_path = os.path.abspath("turboquant-mlx")
           sys.path.append(repo_path)
           
@@ -84,7 +84,8 @@ jobs:
               prompt = "<|im_start|>user\nWrite a 5-word sentence.<|im_end|>\n<|im_start|>assistant\n"
               
               apply_patch()
-              cache = make_adaptive_cache(len(model.layers), bits=4, fp16_layers=1)
+              # Rozanov's repo defaults to 3-bit PolarQuant
+              cache = make_adaptive_cache(len(model.layers), bits=3, fp16_layers=1)
               
               print("▶ Running Anton Rozanov Custom Metal Cache...")
               resp = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=15, verbose=False)
