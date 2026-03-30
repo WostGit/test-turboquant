@@ -47,7 +47,12 @@ jobs:
 
           def run_test(model_name, prompt, bits, head_dim):
               print(f"\n🚀 Loading {model_name}...")
-              model, tokenizer = load(model_name, lazy=True)
+              try:
+                  model, tokenizer = load(model_name, lazy=True)
+              except Exception as e:
+                  print(f"Failed to load model {model_name}: {e}")
+                  return
+                  
               sampler = make_sampler(temp=0.6)
               
               print("=== BASELINE ===")
@@ -58,7 +63,6 @@ jobs:
               base_time = time.time() - start
               base_mem = get_mem() - start_mem
               
-              # FIXED: Moved the string replace outside of the f-string expression
               preview_base = resp_base[:300].replace('\n', ' ')
               print(f"Time: {base_time:.2f}s | Mem Δ: {base_mem:.1f} MB")
               print(f"Preview: {preview_base}")
@@ -79,12 +83,11 @@ jobs:
                   tq_time = time.time() - start
                   tq_mem = get_mem() - start_mem
                   
-                  # FIXED: Moved the string replace outside of the f-string expression
                   preview_tq = resp_tq[:300].replace('\n', ' ')
                   print(f"Time: {tq_time:.2f}s | Mem Δ: {tq_mem:.1f} MB")
                   print(f"Preview: {preview_tq}")
               except Exception as e:
-                  print(f"Failed: {type(e).__name__} - {str(e)[:100]}")
+                  print(f"Failed in TurboQuant execution: {type(e).__name__} - {str(e)[:100]}")
               
               # Cleanup to prevent runner from running out of memory
               del model
@@ -103,16 +106,16 @@ jobs:
           run_test("mlx-community/Qwen2.5-3B-Instruct-4bit", qwen_prompt, bits=4, head_dim=128)
 
           # =====================================================================
-          # OPTION B: TinyLlama with 3-Bit Cache (Head Dim = 64)
+          # OPTION B: TinyLlama with 3-Bit Cache (Head Dim = 64) - FIXED MODEL PATH
           # =====================================================================
           print("\n=== TEST 2: TINYLLAMA @ 3-BIT KV CACHE ===")
           llama_prompt = f"<|user|>\n{prompt_text}<|assistant|>\n"
-          run_test("mlx-community/TinyLlama-1.1B-Chat-v1.0-4bit", llama_prompt, bits=3, head_dim=64)
+          run_test("mlx-community/TinyLlama-1.1B-Chat-v1.0", llama_prompt, bits=3, head_dim=64)
 
           # =====================================================================
-          # OPTION C: TinyLlama with 4-Bit Cache (Head Dim = 64)
+          # OPTION C: TinyLlama with 4-Bit Cache (Head Dim = 64) - FIXED MODEL PATH
           # =====================================================================
           print("\n=== TEST 3: TINYLLAMA @ 4-BIT KV CACHE ===")
-          run_test("mlx-community/TinyLlama-1.1B-Chat-v1.0-4bit", llama_prompt, bits=4, head_dim=64)
+          run_test("mlx-community/TinyLlama-1.1B-Chat-v1.0", llama_prompt, bits=4, head_dim=64)
 
           EOF
