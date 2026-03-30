@@ -1,4 +1,4 @@
-name: TurboQuant vs Native MLX - The Gauntlet
+name: Native MLX Quantized Cache Test
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  gauntlet-test:
+  test:
     runs-on: macos-14
 
     steps:
@@ -24,11 +24,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel psutil
           pip install mlx mlx-lm
-          # Pull the Python TurboQuant fork
-          git clone https://github.com/rachittshah/mlx-turboquant.git
-          cd mlx-turboquant && pip install -e .
 
-      - name: Run The Gauntlet
+      - name: Run Native MLX Quantized Cache
         env:
           HF_TOKEN: "dummy_token_to_suppress_warning"
         run: |
@@ -36,93 +33,57 @@ jobs:
           import mlx.core as mx
           from mlx_lm import load, generate
           from mlx_lm.sample_utils import make_sampler
+          from mlx_lm.models.cache import QuantizedKVCache
           import time
           import psutil
           import gc
-
-          # We are using 0.5B to prevent GitHub Actions from hitting Out-Of-Memory (OOM)
-          model_name = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
-          prompt = "<|im_start|>user\nExplain quantum computing in one sentence.<|im_end|>\n<|im_start|>assistant\n"
 
           def get_mem():
               gc.collect()
               mx.clear_cache()
               return psutil.Process().memory_info().rss / (1024**2)
 
-          def print_header(title):
-              print("\n" + "="*50)
-              print(f" {title} ".center(50, "="))
-              print("="*50)
+          model_name = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
+          print(f"🚀 Loading {model_name}...")
+          model, tokenizer = load(model_name, lazy=True)
+          sampler = make_sampler(temp=0.6)
 
-          # =====================================================================
-          # TEST 1: NATIVE MLX QUANTIZED KV CACHE (Official Support)
-          # =====================================================================
-          print_header("TEST 1: NATIVE MLX 4-BIT KV CACHE")
+          prompt_text = "Explain the concept of KV cache in LLMs in one sentence."
+          qwen_prompt = f"<|im_start|>user\n{prompt_text}<|im_end|>\n<|im_start|>assistant\n"
+
+          print("\n=== BASELINE FP16 CACHE ===")
+          start_mem = get_mem()
+          start = time.time()
+          
+          # Generate with default FP16 cache
+          resp_base = generate(model, tokenizer, prompt=qwen_prompt, max_tokens=100, verbose=False, sampler=sampler)
+          base_time = time.time() - start
+          base_mem = get_mem() - start_mem
+          
+          print(f"Time: {base_time:.2f}s | Mem Δ: {base_mem:.1f} MB")
+          print(f"Baseline Output: {resp_base.strip()}")
+          print("-" * 50)
+
+          print("\n=== NATIVE MLX 4-BIT QUANTIZED CACHE ===")
+          start_mem = get_mem()
+          start = time.time()
+          
           try:
-              from mlx_lm.models.cache import QuantizedKVCache
-              model, tokenizer = load(model_name, lazy=True)
-              sampler = make_sampler(temp=0.6)
-
-              # Initializing native quantized cache
+              # Initializing the native 4-bit cache according to MLX-LM primitives
               cache = [QuantizedKVCache(bits=4, group_size=64) for _ in range(len(model.layers))]
               
-              start_mem = get_mem()
-              start = time.time()
+              # Warm up
+              tokens = mx.array([tokenizer.encode(qwen_prompt)])
+              _ = model(tokens, cache=cache)
               
-              resp = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=50, verbose=False, sampler=sampler)
+              resp_quant = generate(model, tokenizer, prompt=qwen_prompt, prompt_cache=cache, max_tokens=100, verbose=False, sampler=sampler)
+              quant_time = time.time() - start
+              quant_mem = get_mem() - start_mem
               
-              print(f"Success! | Time: {time.time() - start:.2f}s | Mem Δ: {get_mem() - start_mem:.1f} MB")
-              print(f"Output: {resp.strip()[:200]}")
+              print(f"Time: {quant_time:.2f}s | Mem Δ: {quant_mem:.1f} MB")
+              print(f"Quantized Cache Output: {resp_quant.strip()}")
               
-              del model, tokenizer, cache
           except Exception as e:
-              print(f"Native Quantized Cache Failed: {e}")
-
-          # =====================================================================
-          # TEST 2: PYTHON TURBOQUANT WRAPPER (Your original fork)
-          # =====================================================================
-          print_header("TEST 2: PYTHON TURBOQUANT WRAPPER")
-          try:
-              from mlx_turboquant.cache import TurboQuantKVCache
-              model, tokenizer = load(model_name, lazy=True)
-              sampler = make_sampler(temp=0.6)
-
-              # Initializing TurboQuant cache fork
-              cache = [TurboQuantKVCache(bits=4, head_dim=model.args.hidden_size // model.args.num_attention_heads) for _ in range(len(model.layers))]
+              print(f"Failed in Quantized Cache execution: {type(e).__name__} - {str(e)}")
               
-              start_mem = get_mem()
-              start = time.time()
-              
-              resp = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=50, verbose=False, sampler=sampler)
-              
-              print(f"Success! | Time: {time.time() - start:.2f}s | Mem Δ: {get_mem() - start_mem:.1f} MB")
-              print(f"Output: {resp.strip()[:200]}")
-              
-              del model, tokenizer, cache
-          except Exception as e:
-              print(f"TurboQuant Wrapper Failed: {e}")
-
-          # =====================================================================
-          # TEST 3: CUSTOM METAL KERNEL TURBOQUANT (Simulated)
-          # =====================================================================
-          print_header("TEST 3: CUSTOM METAL TURBOQUANT")
-          print("Simulating C++ Metal custom kernel dequantization trigger...")
-          try:
-              # Custom Metal solutions directly override the mx.metal execution or the attention forward pass.
-              # We will simulate a forward pass with a high-compression flag to see if the environment tolerates it.
-              model, tokenizer = load(model_name, lazy=True)
-              
-              # Attempt to pass a mock Walsh-Hadamard pre-processed state or flag
-              # Since we cannot compile actual Metal shaders live on standard GH runners easily,
-              # we track if standard generation is safe while aggressive 3-bit packing parameters are requested.
-              print("Requesting 3-bit allocation for custom kernel path...")
-              
-              # If execution makes it here, standard execution works despite Metal restrictions on GitHub
-              print("Result: GitHub Runner does not have a real Apple Silicon GPU. Skipping actual Metal execution.")
-              
-              del model, tokenizer
-          except Exception as e:
-              print(f"Custom Metal Test Failed: {e}")
-
-          print_header("THE GAUNTLET COMPLETE")
           EOF
