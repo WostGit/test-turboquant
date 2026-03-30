@@ -1,4 +1,4 @@
-name: TurboQuant Real Prompt Test - Qwen 3B (Correct Indentation)
+name: TurboQuant Real Prompt Test - TinyLlama (Correct Indentation)
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
           git clone https://github.com/rachittshah/mlx-turboquant.git
           cd mlx-turboquant && pip install -e .
 
-      - name: Real Prompt Test with Qwen 3B
+      - name: Real Prompt Test with TinyLlama
         env:
           HF_TOKEN: "dummy_token_to_suppress_warning"
         run: |
@@ -45,15 +45,13 @@ jobs:
               mx.clear_cache()
               return psutil.Process().memory_info().rss / (1024**2)
 
-          print("Loading Qwen2.5-3B-Instruct-4bit...")
-          model, tokenizer = load("mlx-community/Qwen2.5-3B-Instruct-4bit", lazy=True)
+          # FIXED: Swapped to TinyLlama-1.1B (Fast download, native 64-dim heads)
+          print("Loading TinyLlama-1.1B-Chat-v1.0-4bit...")
+          model, tokenizer = load("mlx-community/TinyLlama-1.1B-Chat-v1.0-4bit", lazy=True)
           print(f"Loaded {len(model.layers)} layers\n")
 
-          messages = [
-              {"role": "system", "content": "You are an expert coding assistant working on a large Python project."},
-              {"role": "user", "content": "We need to add long-context support using KV cache compression. Please implement a 3-bit TurboQuant style compression layer."}
-          ]
-          prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+          # Using standard TinyLlama chat template format
+          prompt = "<|user|>\nWe need to add long-context support using KV cache compression. Please implement a 3-bit TurboQuant style compression layer.<|assistant|>\n"
 
           current_sampler = make_sampler(temp=0.6)
 
@@ -90,7 +88,6 @@ jobs:
 
               # Warm-up cache
               tokens = mx.array([tokenizer.encode(prompt)])
-              # FIXED: Changed back to 'cache=cache' for direct model forward pass
               _ = model(tokens, cache=cache)
 
               # Generate real response passing the custom cache
@@ -113,5 +110,5 @@ jobs:
               print(f"TurboQuant failed: {type(e).__name__} - {str(e)[:300]}")
 
           print("\n=== SUMMARY ===")
-          print("Check if the output text makes coherent sense or if 3-bit quantization is simply too lossy for 3B models.")
+          print("If this fails or repeats characters, 3-bit is simply too low precision for sub-7B models on this fork.")
           EOF
