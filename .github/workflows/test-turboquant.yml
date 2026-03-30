@@ -1,4 +1,4 @@
-name: TurboQuant 7B Heavyweight Test
+name: Qwen 7B Official MLX Quantized Cache
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  force-test:
+  test-official-mlx:
     runs-on: macos-14
 
     steps:
@@ -25,71 +25,32 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel psutil
           pip install mlx mlx-lm numpy
 
-      # =====================================================================
-      # REPO 1: Rachitt Shah (Qwen 7B at 4-bit)
-      # =====================================================================
-      - name: Test Repo 1 - Rachitt Shah (7B)
-        continue-on-error: true
+      - name: Run Qwen 7B with Native 4-bit KV Cache
         run: |
-          git clone https://github.com/rachittshah/mlx-turboquant.git
-          cd mlx-turboquant
-          pip install -e .
-          
           python - << 'EOF'
           import mlx.core as mx
           from mlx_lm import load, generate
-          from mlx_turboquant.cache import TurboQuantKVCache
           
-          # UPGRADED: Swapping to 7B model
           model_name = "mlx-community/Qwen2.5-7B-Instruct-4bit"
+          print("⏳ Loading model and establishing native 4-bit KV cache...")
+          
+          # We use the native MLX load with a quantized KV cache setup
           model, tokenizer = load(model_name, lazy=True)
+          
           prompt = "<|im_start|>user\nWrite a 5-word sentence.<|im_end|>\n<|im_start|>assistant\n"
           
           try:
-              head_dim = model.args.hidden_size // model.args.num_attention_heads
-              cache = [TurboQuantKVCache(bits=4, head_dim=head_dim) for _ in range(len(model.layers))]
-              
-              print("▶ Running Rachitt Shah (7B @ 4-bit)...")
-              resp = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=15, verbose=False)
+              # Official MLX dynamic quantization during generation
+              print("▶ Running generation on native Metal shaders...")
+              resp = generate(
+                  model, 
+                  tokenizer, 
+                  prompt=prompt, 
+                  max_tokens=15, 
+                  verbose=False,
+                  kv_bits=4 # This forces the native cache to 4-bits securely!
+              )
               print(f"Result: {resp.strip()}")
           except Exception as e:
               print(f"Execution Failed: {e}")
-          EOF
-
-      # =====================================================================
-      # REPO 2: Anton Rozanov (Qwen 7B at 3-bit)
-      # =====================================================================
-      - name: Test Repo 2 - Anton Rozanov (7B)
-        continue-on-error: true
-        run: |
-          git clone https://github.com/arozanov/turboquant-mlx.git
-          
-          python - << 'EOF'
-          import sys
-          import os
-          
-          repo_path = os.path.abspath("turboquant-mlx")
-          sys.path.append(repo_path)
-          
-          try:
-              import mlx.core as mx
-              from mlx_lm import load, generate
-              from turboquant_mlx import make_adaptive_cache, apply_patch
-              
-              print("✅ Successfully bypassed broken installer using sys.path hack!")
-              
-              # UPGRADED: Swapping to 7B model
-              model_name = "mlx-community/Qwen2.5-7B-Instruct-4bit"
-              model, tokenizer = load(model_name, lazy=True)
-              prompt = "<|im_start|>user\nWrite a 5-word sentence.<|im_end|>\n<|im_start|>assistant\n"
-              
-              apply_patch()
-              cache = make_adaptive_cache(len(model.layers), bits=3, fp16_layers=1)
-              
-              print("▶ Running Anton Rozanov (7B @ 3-bit)...")
-              resp = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=15, verbose=False)
-              print(f"Result: {resp.strip()}")
-              
-          except Exception as e:
-              print(f"Rozanov Execution Failed: {e}")
           EOF
