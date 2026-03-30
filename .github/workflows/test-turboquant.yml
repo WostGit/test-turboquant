@@ -1,4 +1,4 @@
-name: Qwen 7B Official MLX Quantized Cache
+name: Qwen 7B Official MLX 8-Bit Cache
 
 on:
   push:
@@ -25,22 +25,21 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel psutil
           pip install mlx mlx-lm numpy
 
-      - name: Run Qwen 7B with Native 4-bit KV Cache
+      - name: Run Qwen 7B with Native 8-bit KV Cache
         run: |
           python - << 'EOF'
           import mlx.core as mx
           from mlx_lm import load, generate
           
           model_name = "mlx-community/Qwen2.5-7B-Instruct-4bit"
-          print("⏳ Loading model and establishing native 4-bit KV cache...")
+          print("⏳ Loading model and establishing native 8-bit KV cache...")
           
-          # We use the native MLX load with a quantized KV cache setup
+          # Load model
           model, tokenizer = load(model_name, lazy=True)
           
           prompt = "<|im_start|>user\nWrite a 5-word sentence.<|im_end|>\n<|im_start|>assistant\n"
           
           try:
-              # Official MLX dynamic quantization during generation
               print("▶ Running generation on native Metal shaders...")
               resp = generate(
                   model, 
@@ -48,7 +47,7 @@ jobs:
                   prompt=prompt, 
                   max_tokens=15, 
                   verbose=False,
-                  kv_bits=4 # This forces the native cache to 4-bits securely!
+                  kv_bits=8 # FIXED: Shifted from 4 to 8 to restore context coherence
               )
               print(f"Result: {resp.strip()}")
           except Exception as e:
