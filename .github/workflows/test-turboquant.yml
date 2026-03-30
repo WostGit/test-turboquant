@@ -1,4 +1,4 @@
-name: TurboQuant Real Prompt Test - Llama (Correct Indentation)
+name: TurboQuant Real Prompt Test - Qwen 3B (Correct Indentation)
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
           git clone https://github.com/rachittshah/mlx-turboquant.git
           cd mlx-turboquant && pip install -e .
 
-      - name: Real Prompt Test with Llama-3
+      - name: Real Prompt Test with Qwen 3B
         env:
           HF_TOKEN: "dummy_token_to_suppress_warning"
         run: |
@@ -45,11 +45,12 @@ jobs:
               mx.clear_cache()
               return psutil.Process().memory_info().rss / (1024**2)
 
-          # FIXED: Swapped to Llama 3 8B, which is much more resilient to lossy quantization
-          print("Loading Llama-3-8B-Instruct (FP16)...")
-          model, tokenizer = load("mlx-community/Meta-Llama-3-8B-Instruct-4bit", lazy=True)
+          # FIXED: Swapped to Qwen 2.5 3B (Good middle ground for speed vs smarts)
+          print("Loading Qwen2.5-3B-Instruct-4bit...")
+          model, tokenizer = load("mlx-community/Qwen2.5-3B-Instruct-4bit", lazy=True)
           print(f"Loaded {len(model.layers)} layers\n")
 
+          # Using standard Qwen chat template format
           messages = [
               {"role": "system", "content": "You are an expert coding assistant working on a large Python project."},
               {"role": "user", "content": "We need to add long-context support using KV cache compression. Please implement a 3-bit TurboQuant style compression layer."}
@@ -113,5 +114,5 @@ jobs:
               print(f"TurboQuant failed: {type(e).__name__} - {str(e)[:300]}")
 
           print("\n=== SUMMARY ===")
-          print("If TurboQuant response is coherent english instead of repeating characters, the problem was Qwen's sensitivity.")
+          print("Check if the output text makes coherent sense or if 3-bit quantization is simply too lossy for 3B models.")
           EOF
