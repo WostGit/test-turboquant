@@ -1,4 +1,4 @@
-name: Native MLX Quantized Cache Test
+name: TurboQuant Community Stress Test
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  stress-test:
     runs-on: macos-14
 
     steps:
@@ -20,70 +20,88 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install Base Dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel psutil
-          pip install mlx mlx-lm
+          pip install mlx mlx-lm numpy
 
-      - name: Run Native MLX Quantized Cache
+      # =====================================================================
+      # IMPLEMENTATION 1: Python Prototype (Rachitt Shah)
+      # =====================================================================
+      - name: Test Repo 1 - Python Prototype (rachittshah)
+        continue-on-error: true
+        run: |
+          echo "Cloning Rachitt Shah's pure-Python MLX implementation..."
+          git clone https://github.com/rachittshah/mlx-turboquant.git
+          cd mlx-turboquant
+          pip install -e .
+          
+          python - << 'EOF'
+          try:
+              from mlx_turboquant.cache import TurboQuantKVCache
+              print("✅ Rachitt Shah's TurboQuant successfully imported!")
+          except Exception as e:
+              print(f"❌ Failed to import: {e}")
+          EOF
+
+      # =====================================================================
+      # IMPLEMENTATION 2: Fused Metal Kernels (Anton Rozanov)
+      # =====================================================================
+      - name: Test Repo 2 - Fused Metal Kernels (arozanov)
+        continue-on-error: true
+        run: |
+          echo "Installing Anton Rozanov's Fused Metal implementation..."
+          # This repo compiles raw Metal shaders on install
+          pip install git+https://github.com/arozanov/turboquant-mlx.git
+          
+          python - << 'EOF'
+          try:
+              from turboquant_mlx import make_adaptive_cache, apply_patch
+              print("✅ Anton Rozanov's custom Metal cache successfully imported!")
+          except Exception as e:
+              print(f"❌ Failed to import: {e}")
+          EOF
+
+      # =====================================================================
+      # FINAL GAUNTLET: Running execution checks
+      # =====================================================================
+      - name: Execute Comparative Dry Runs
         env:
           HF_TOKEN: "dummy_token_to_suppress_warning"
         run: |
           python - << 'EOF'
           import mlx.core as mx
           from mlx_lm import load, generate
-          from mlx_lm.sample_utils import make_sampler
-          from mlx_lm.models.cache import QuantizedKVCache
           import time
-          import psutil
-          import gc
 
-          def get_mem():
-              gc.collect()
-              mx.clear_cache()
-              return psutil.Process().memory_info().rss / (1024**2)
-
+          # Using an ultra-small model to keep GitHub memory safe
           model_name = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
-          print(f"🚀 Loading {model_name}...")
+          print(f"Loading {model_name} for fallback testing...")
           model, tokenizer = load(model_name, lazy=True)
-          sampler = make_sampler(temp=0.6)
+          prompt = "<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n"
 
-          prompt_text = "Explain the concept of KV cache in LLMs in one sentence."
-          qwen_prompt = f"<|im_start|>user\n{prompt_text}<|im_end|>\n<|im_start|>assistant\n"
-
-          print("\n=== BASELINE FP16 CACHE ===")
-          start_mem = get_mem()
-          start = time.time()
-          
-          # Generate with default FP16 cache
-          resp_base = generate(model, tokenizer, prompt=qwen_prompt, max_tokens=100, verbose=False, sampler=sampler)
-          base_time = time.time() - start
-          base_mem = get_mem() - start_mem
-          
-          print(f"Time: {base_time:.2f}s | Mem Δ: {base_mem:.1f} MB")
-          print(f"Baseline Output: {resp_base.strip()}")
-          print("-" * 50)
-
-          print("\n=== NATIVE MLX 4-BIT QUANTIZED CACHE ===")
-          start_mem = get_mem()
-          start = time.time()
-          
+          # --- Test 1 Execution ---
           try:
-              # Initializing the native 4-bit cache according to MLX-LM primitives
-              cache = [QuantizedKVCache(bits=4, group_size=64) for _ in range(len(model.layers))]
+              from mlx_turboquant.cache import TurboQuantKVCache
+              head_dim = model.args.hidden_size // model.args.num_attention_heads
+              cache = [TurboQuantKVCache(bits=3, head_dim=head_dim) for _ in range(len(model.layers))]
               
-              # Warm up
-              tokens = mx.array([tokenizer.encode(qwen_prompt)])
-              _ = model(tokens, cache=cache)
-              
-              resp_quant = generate(model, tokenizer, prompt=qwen_prompt, prompt_cache=cache, max_tokens=100, verbose=False, sampler=sampler)
-              quant_time = time.time() - start
-              quant_mem = get_mem() - start_mem
-              
-              print(f"Time: {quant_time:.2f}s | Mem Δ: {quant_mem:.1f} MB")
-              print(f"Quantized Cache Output: {resp_quant.strip()}")
-              
+              print("\n▶ Running Rachitt Shah Execution...")
+              resp = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=10, verbose=False)
+              print(f"Result: {resp.strip()}")
           except Exception as e:
-              print(f"Failed in Quantized Cache execution: {type(e).__name__} - {str(e)}")
+              print(f"Rachitt Execution Failed: {str(e)[:100]}")
+
+          # --- Test 2 Execution ---
+          try:
+              from turboquant_mlx import make_adaptive_cache, apply_patch
+              # This overrides the default forward attention pass with custom Metal operations
+              apply_patch()
+              cache = make_adaptive_cache(len(model.layers), bits=3, fp16_layers=1)
               
+              print("\n▶ Running Anton Rozanov Execution...")
+              resp = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=10, verbose=False)
+              print(f"Result: {resp.strip()}")
+          except Exception as e:
+              print(f"Rozanov Execution Failed: {str(e)[:100]}")
           EOF
