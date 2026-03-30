@@ -45,12 +45,10 @@ jobs:
               mx.clear_cache()
               return psutil.Process().memory_info().rss / (1024**2)
 
-          # FIXED: Swapped to Qwen 2.5 3B (Good middle ground for speed vs smarts)
           print("Loading Qwen2.5-3B-Instruct-4bit...")
           model, tokenizer = load("mlx-community/Qwen2.5-3B-Instruct-4bit", lazy=True)
           print(f"Loaded {len(model.layers)} layers\n")
 
-          # Using standard Qwen chat template format
           messages = [
               {"role": "system", "content": "You are an expert coding assistant working on a large Python project."},
               {"role": "user", "content": "We need to add long-context support using KV cache compression. Please implement a 3-bit TurboQuant style compression layer."}
@@ -92,7 +90,8 @@ jobs:
 
               # Warm-up cache
               tokens = mx.array([tokenizer.encode(prompt)])
-              _ = model(tokens, prompt_cache=cache)
+              # FIXED: Changed back to 'cache=cache' for direct model forward pass
+              _ = model(tokens, cache=cache)
 
               # Generate real response passing the custom cache
               response_tq = generate(
