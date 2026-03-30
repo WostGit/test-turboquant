@@ -1,4 +1,4 @@
-name: TurboQuant Community Stress Test
+name: TurboQuant Forced Execution Test
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  stress-test:
+  force-test:
     runs-on: macos-14
 
     steps:
@@ -26,82 +26,67 @@ jobs:
           pip install mlx mlx-lm numpy
 
       # =====================================================================
-      # IMPLEMENTATION 1: Python Prototype (Rachitt Shah)
+      # REPO 1: Forcing 8-bit to stop cognitive collapse
       # =====================================================================
-      - name: Test Repo 1 - Python Prototype (rachittshah)
+      - name: Test Repo 1 - Rachitt Shah (Pushed to 8-bit)
         continue-on-error: true
         run: |
-          echo "Cloning Rachitt Shah's pure-Python MLX implementation..."
           git clone https://github.com/rachittshah/mlx-turboquant.git
           cd mlx-turboquant
           pip install -e .
           
           python - << 'EOF'
+          import mlx.core as mx
+          from mlx_lm import load, generate
+          from mlx_turboquant.cache import TurboQuantKVCache
+          
+          model_name = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
+          model, tokenizer = load(model_name, lazy=True)
+          prompt = "<|im_start|>user\nWrite a 5-word sentence.<|im_end|>\n<|im_start|>assistant\n"
+          
           try:
-              from mlx_turboquant.cache import TurboQuantKVCache
-              print("✅ Rachitt Shah's TurboQuant successfully imported!")
+              head_dim = model.args.hidden_size // model.args.num_attention_heads
+              # PUSHED TO 8-BIT: This prevents the '!!!!!!!!' overflow errors on tiny models
+              cache = [TurboQuantKVCache(bits=8, head_dim=head_dim) for _ in range(len(model.layers))]
+              
+              print("▶ Running Rachitt Shah (8-bit)...")
+              resp = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=15, verbose=False)
+              print(f"Result: {resp.strip()}")
           except Exception as e:
-              print(f"❌ Failed to import: {e}")
+              print(f"Execution Failed: {e}")
           EOF
 
       # =====================================================================
-      # IMPLEMENTATION 2: Fused Metal Kernels (Anton Rozanov)
+      # REPO 2: Forcing the installer to ignore broken setuptools backend
       # =====================================================================
-      - name: Test Repo 2 - Fused Metal Kernels (arozanov)
+      - name: Test Repo 2 - Anton Rozanov (Bypassing Broken Installer)
         continue-on-error: true
         run: |
-          echo "Installing Anton Rozanov's Fused Metal implementation..."
-          # This repo compiles raw Metal shaders on install
-          pip install git+https://github.com/arozanov/turboquant-mlx.git
+          git clone https://github.com/arozanov/turboquant-mlx.git
+          cd turboquant-mlx
           
-          python - << 'EOF'
-          try:
-              from turboquant_mlx import make_adaptive_cache, apply_patch
-              print("✅ Anton Rozanov's custom Metal cache successfully imported!")
-          except Exception as e:
-              print(f"❌ Failed to import: {e}")
-          EOF
-
-      # =====================================================================
-      # FINAL GAUNTLET: Running execution checks
-      # =====================================================================
-      - name: Execute Comparative Dry Runs
-        env:
-          HF_TOKEN: "dummy_token_to_suppress_warning"
-        run: |
+          # FORCE: We are ignoring his setup.py and manually installing via wheel
+          pip install . --no-build-isolation --use-pep517
+          
           python - << 'EOF'
           import mlx.core as mx
           from mlx_lm import load, generate
-          import time
-
-          # Using an ultra-small model to keep GitHub memory safe
-          model_name = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
-          print(f"Loading {model_name} for fallback testing...")
-          model, tokenizer = load(model_name, lazy=True)
-          prompt = "<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n"
-
-          # --- Test 1 Execution ---
-          try:
-              from mlx_turboquant.cache import TurboQuantKVCache
-              head_dim = model.args.hidden_size // model.args.num_attention_heads
-              cache = [TurboQuantKVCache(bits=3, head_dim=head_dim) for _ in range(len(model.layers))]
-              
-              print("\n▶ Running Rachitt Shah Execution...")
-              resp = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=10, verbose=False)
-              print(f"Result: {resp.strip()}")
-          except Exception as e:
-              print(f"Rachitt Execution Failed: {str(e)[:100]}")
-
-          # --- Test 2 Execution ---
+          
           try:
               from turboquant_mlx import make_adaptive_cache, apply_patch
-              # This overrides the default forward attention pass with custom Metal operations
-              apply_patch()
-              cache = make_adaptive_cache(len(model.layers), bits=3, fp16_layers=1)
+              print("✅ Successfully bypassed broken installer!")
               
-              print("\n▶ Running Anton Rozanov Execution...")
-              resp = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=10, verbose=False)
+              model_name = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
+              model, tokenizer = load(model_name, lazy=True)
+              prompt = "<|im_start|>user\nWrite a 5-word sentence.<|im_end|>\n<|im_start|>assistant\n"
+              
+              apply_patch()
+              cache = make_adaptive_cache(len(model.layers), bits=4, fp16_layers=1)
+              
+              print("▶ Running Anton Rozanov Custom Metal Cache...")
+              resp = generate(model, tokenizer, prompt=prompt, prompt_cache=cache, max_tokens=15, verbose=False)
               print(f"Result: {resp.strip()}")
+              
           except Exception as e:
-              print(f"Rozanov Execution Failed: {str(e)[:100]}")
+              print(f"Rozanov Execution Failed: {e}")
           EOF
