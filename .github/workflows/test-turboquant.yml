@@ -1,4 +1,4 @@
-name: Qwen 7B Official MLX 8-Bit Cache
+name: Qwen 7B KV Cache Stress Test
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  test-official-mlx:
+  stress-test:
     runs-on: macos-14
 
     steps:
@@ -25,31 +25,41 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel psutil
           pip install mlx mlx-lm numpy
 
-      - name: Run Qwen 7B with Native 8-bit KV Cache
+      - name: Run Limit Tests
         run: |
           python - << 'EOF'
           import mlx.core as mx
           from mlx_lm import load, generate
           
           model_name = "mlx-community/Qwen2.5-7B-Instruct-4bit"
-          print("⏳ Loading model and establishing native 8-bit KV cache...")
-          
-          # Load model
+          print("⏳ Loading model...")
           model, tokenizer = load(model_name, lazy=True)
           
           prompt = "<|im_start|>user\nWrite a 5-word sentence.<|im_end|>\n<|im_start|>assistant\n"
           
-          try:
-              print("▶ Running generation on native Metal shaders...")
-              resp = generate(
-                  model, 
-                  tokenizer, 
-                  prompt=prompt, 
-                  max_tokens=15, 
-                  verbose=False,
-                  kv_bits=8 # FIXED: Shifted from 4 to 8 to restore context coherence
-              )
-              print(f"Result: {resp.strip()}")
-          except Exception as e:
-              print(f"Execution Failed: {e}")
+          def test_limit(bit_rate, start_step):
+              print(f"\n▶ Testing kv_bits={bit_rate} | quantized_kv_start={start_step}")
+              try:
+                  resp = generate(
+                      model, 
+                      tokenizer, 
+                      prompt=prompt, 
+                      max_tokens=15, 
+                      verbose=False,
+                      kv_bits=bit_rate,
+                      quantized_kv_start=start_step
+                  )
+                  print(f"Result: {resp.strip()}")
+              except Exception as e:
+                  print(f"Failed at {bit_rate}-bits: {e}")
+
+          # Test 1: Brutal 4-bit from Step 0 (No safety ramp-up)
+          test_limit(bit_rate=4, start_step=0)
+          
+          # Test 2: Pushing to 3-bit
+          test_limit(bit_rate=3, start_step=0)
+          
+          # Test 3: The edge of the cliff - 2-bit
+          test_limit(bit_rate=2, start_step=0)
+
           EOF
