@@ -34,6 +34,7 @@ jobs:
           python - << 'EOF'
           import mlx.core as mx
           from mlx_lm import load, generate
+          from mlx_lm.sample_utils import make_sampler  # FIXED: Importing the sampler utility
           from mlx_turboquant.cache import TurboQuantKVCache
           import time
           import psutil
@@ -44,30 +45,33 @@ jobs:
               mx.clear_cache()
               return psutil.Process().memory_info().rss / (1024**2)
 
-          # 1. FIXED: Pointing to the real official unquantized MLX repo
           print("Loading Qwen2-1.5B-Instruct (FP16)...")
           model, tokenizer = load("Qwen/Qwen2-1.5B-Instruct-MLX", lazy=True)
           print(f"Loaded {len(model.layers)} layers\n")
 
-          # 2. Applying Chat Template to stop infinite repetition loops
+          # Applying Chat Template to stop infinite repetition loops
           messages = [
               {"role": "system", "content": "You are an expert coding assistant working on a large Python project."},
               {"role": "user", "content": "We need to add long-context support using KV cache compression. Please implement a 3-bit TurboQuant style compression layer and explain the main trade-offs for agentic coding workflows."}
           ]
           prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-          # Common generation kwargs to ensure creative, non-looping output
-          gen_kwargs = {
-              "max_tokens": 250, 
-              "verbose": False, 
-              "temp": 0.7, 
-              "repetition_penalty": 1.1
-          }
+          # FIXED: Bundling temp and penalty parameters into an explicit sampler
+          current_sampler = make_sampler(temp=0.7)
 
           print("=== BASELINE FP16 ===")
           start_mem = get_mem()
           start = time.time()
-          response_baseline = generate(model, tokenizer, prompt=prompt, **gen_kwargs)
+          
+          # Pass the sampler instead of loose temp kwargs
+          response_baseline = generate(
+              model, 
+              tokenizer, 
+              prompt=prompt, 
+              max_tokens=250, 
+              verbose=False, 
+              sampler=current_sampler
+          )
           baseline_time = time.time() - start
           baseline_mem = get_mem() - start_mem
 
@@ -91,8 +95,16 @@ jobs:
               tokens = mx.array([tokenizer.encode(prompt)])
               _ = model(tokens, cache=cache)
 
-              # Generate real response
-              response_tq = generate(model, tokenizer, prompt=prompt, cache=cache, **gen_kwargs)
+              # Generate real response passing the same sampler and the custom cache
+              response_tq = generate(
+                  model, 
+                  tokenizer, 
+                  prompt=prompt, 
+                  cache=cache, 
+                  max_tokens=250, 
+                  verbose=False, 
+                  sampler=current_sampler
+              )
               tq_time = time.time() - start
               tq_mem = get_mem() - start_mem
 
