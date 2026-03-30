@@ -1,4 +1,4 @@
-name: Qwen 7B KV Cache Stress Test
+name: Qwen 7B Context Limit Test
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  stress-test:
+  long-context-test:
     runs-on: macos-14
 
     steps:
@@ -25,7 +25,7 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel psutil
           pip install mlx mlx-lm numpy
 
-      - name: Run Limit Tests
+      - name: Test Long Context Cache
         run: |
           python - << 'EOF'
           import mlx.core as mx
@@ -35,31 +35,38 @@ jobs:
           print("⏳ Loading model...")
           model, tokenizer = load(model_name, lazy=True)
           
-          prompt = "<|im_start|>user\nWrite a 5-word sentence.<|im_end|>\n<|im_start|>assistant\n"
+          # Simulate a massive block of context (~2000+ words)
+          filler_text = "The quick brown fox jumps over the lazy dog. " * 500
+          secret_fact = "The secret password is 'BANANA-CAKE'."
           
-          def test_limit(bit_rate, start_step):
-              print(f"\n▶ Testing kv_bits={bit_rate} | quantized_kv_start={start_step}")
-              try:
-                  resp = generate(
-                      model, 
-                      tokenizer, 
-                      prompt=prompt, 
-                      max_tokens=15, 
-                      verbose=False,
-                      kv_bits=bit_rate,
-                      quantized_kv_start=start_step
-                  )
-                  print(f"Result: {resp.strip()}")
-              except Exception as e:
-                  print(f"Failed at {bit_rate}-bits: {e}")
-
-          # Test 1: Brutal 4-bit from Step 0 (No safety ramp-up)
-          test_limit(bit_rate=4, start_step=0)
+          # We bury the secret right in the middle of a massive prompt
+          prompt = f"<|im_start|>user\nHere is a massive document:\n{filler_text}\n{secret_fact}\n{filler_text}\nBased on the text, what is the secret password?<|im_end|>\n<|im_start|>assistant\n"
           
-          # Test 2: Pushing to 3-bit
-          test_limit(bit_rate=3, start_step=0)
+          print(f"📊 Prompt length is roughly {len(prompt.split())} words.")
           
-          # Test 3: The edge of the cliff - 2-bit
-          test_limit(bit_rate=2, start_step=0)
-
+          try:
+              print("▶ Running generation on 8-bit KV cache...")
+              resp = generate(
+                  model, 
+                  tokenizer, 
+                  prompt=prompt, 
+                  max_tokens=20, 
+                  verbose=False,
+                  kv_bits=8 # Using our known stable 8-bit quantum cache
+              )
+              print(f"Result: {resp.strip()}")
+              
+              print("\n▶ Running generation on standard uncompressed cache (None)...")
+              resp_standard = generate(
+                  model, 
+                  tokenizer, 
+                  prompt=prompt, 
+                  max_tokens=20, 
+                  verbose=False,
+                  kv_bits=None # No quantization, using raw 16-bit floats
+              )
+              print(f"Result: {resp_standard.strip()}")
+              
+          except Exception as e:
+              print(f"Execution Failed: {e}")
           EOF
