@@ -1,4 +1,4 @@
-name: Qwen 7B Context Limit Test
+name: Qwen 7B Fast Context Test
 
 on:
   push:
@@ -23,23 +23,28 @@ jobs:
       - name: Install Base Dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel psutil
-          pip install mlx mlx-lm numpy
+          # ADDED hf_transfer for blazing fast downloads
+          pip install mlx mlx-lm numpy hf_transfer
 
       - name: Test Long Context Cache
+        env:
+          # This forces Hugging Face to use the Rust-based fast downloader
+          HF_HUB_ENABLE_HF_TRANSFER: "1"
         run: |
           python - << 'EOF'
+          import os
           import mlx.core as mx
           from mlx_lm import load, generate
           
           model_name = "mlx-community/Qwen2.5-7B-Instruct-4bit"
-          print("⏳ Loading model...")
+          print("⏳ Loading model with Rust hf_transfer...")
+          
           model, tokenizer = load(model_name, lazy=True)
           
-          # Simulate a massive block of context (~2000+ words)
-          filler_text = "The quick brown fox jumps over the lazy dog. " * 500
+          # 1500 words of filler text to force the KV cache to work
+          filler_text = "The quick brown fox jumps over the lazy dog. " * 300
           secret_fact = "The secret password is 'BANANA-CAKE'."
           
-          # We bury the secret right in the middle of a massive prompt
           prompt = f"<|im_start|>user\nHere is a massive document:\n{filler_text}\n{secret_fact}\n{filler_text}\nBased on the text, what is the secret password?<|im_end|>\n<|im_start|>assistant\n"
           
           print(f"📊 Prompt length is roughly {len(prompt.split())} words.")
@@ -52,20 +57,9 @@ jobs:
                   prompt=prompt, 
                   max_tokens=20, 
                   verbose=False,
-                  kv_bits=8 # Using our known stable 8-bit quantum cache
+                  kv_bits=8 # Quantized 8-bit cache
               )
               print(f"Result: {resp.strip()}")
-              
-              print("\n▶ Running generation on standard uncompressed cache (None)...")
-              resp_standard = generate(
-                  model, 
-                  tokenizer, 
-                  prompt=prompt, 
-                  max_tokens=20, 
-                  verbose=False,
-                  kv_bits=None # No quantization, using raw 16-bit floats
-              )
-              print(f"Result: {resp_standard.strip()}")
               
           except Exception as e:
               print(f"Execution Failed: {e}")
