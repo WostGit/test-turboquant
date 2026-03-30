@@ -44,12 +44,12 @@ jobs:
               mx.clear_cache()
               return psutil.Process().memory_info().rss / (1024**2)
 
-          # 1. FIXED: Loading the actual FP16 model for a true baseline
+          # 1. FIXED: Pointing to the real official unquantized MLX repo
           print("Loading Qwen2-1.5B-Instruct (FP16)...")
-          model, tokenizer = load("mlx-community/Qwen2-1.5B-Instruct", lazy=True)
+          model, tokenizer = load("Qwen/Qwen2-1.5B-Instruct-MLX", lazy=True)
           print(f"Loaded {len(model.layers)} layers\n")
 
-          # 2. FIXED: Applying Chat Template to stop infinite repetition loops
+          # 2. Applying Chat Template to stop infinite repetition loops
           messages = [
               {"role": "system", "content": "You are an expert coding assistant working on a large Python project."},
               {"role": "user", "content": "We need to add long-context support using KV cache compression. Please implement a 3-bit TurboQuant style compression layer and explain the main trade-offs for agentic coding workflows."}
